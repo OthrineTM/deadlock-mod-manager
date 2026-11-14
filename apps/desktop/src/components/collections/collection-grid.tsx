@@ -18,7 +18,7 @@ import { Package } from "@deadlock-mods/ui/icons";
 import { CardsThreeIcon, MagnifyingGlass } from "@phosphor-icons/react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import Fuse from "fuse.js";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSearchQueryState } from "@/hooks/use-search";
@@ -26,10 +26,12 @@ import { collectionsQueryOptions } from "@/lib/collections/queries";
 import { usePersistedStore } from "@/lib/store";
 import type { CatalogCollectionDto } from "@/types/generated/CatalogCollectionDto";
 import HeroFilter from "@/components/mod-browsing/hero-filter";
-import { CollectionCard, CollectionCardSkeleton } from "./collection-card";
-
-const GRID_CLASS =
-  "grid grid-cols-2 gap-4 px-1 pr-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6";
+import { CollectionCardSkeleton } from "./collection-card";
+import {
+  COLLECTION_GRID_CLASS,
+  type CollectionListSection,
+  VirtualCollectionList,
+} from "./virtual-collection-list";
 
 // Same fuzziness as the local mod search.
 const COLLECTION_SEARCH_THRESHOLD = 0.35;
@@ -43,23 +45,6 @@ const SIZE_RANGES = {
   huge: [100, Infinity],
 } as const;
 type SizeRange = keyof typeof SIZE_RANGES;
-
-const CollectionSection = ({
-  title,
-  collections,
-}: {
-  title?: string;
-  collections: CatalogCollectionDto[];
-}) => (
-  <section className='flex flex-col gap-3'>
-    {title && <h2 className='px-1 font-semibold text-lg'>{title}</h2>}
-    <div className={GRID_CLASS}>
-      {collections.map((collection) => (
-        <CollectionCard collection={collection} key={collection.id} />
-      ))}
-    </div>
-  </section>
-);
 
 export const CollectionGrid = () => {
   const { t } = useTranslation();
@@ -104,6 +89,30 @@ export const CollectionGrid = () => {
     [collections],
   );
 
+  const results = useMemo(
+    () =>
+      debouncedQuery
+        ? fuse.search(debouncedQuery).map((result) => result.item)
+        : null,
+    [fuse, debouncedQuery],
+  );
+  const sections = useMemo((): CollectionListSection[] => {
+    if (results) return [{ collections: results }];
+    const featured = collections.filter((collection) => collection.isFeatured);
+    return [
+      { title: t("collections.featured"), collections: featured },
+      {
+        title: t("collections.all"),
+        collections: collections.filter((collection) => !collection.isFeatured),
+      },
+    ];
+  }, [results, collections, t]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // A new search or filter starts from the top of the list.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [sections]);
+
   if (visible.length === 0) {
     return (
       <Empty className='py-12'>
@@ -119,11 +128,6 @@ export const CollectionGrid = () => {
       </Empty>
     );
   }
-
-  const results = debouncedQuery
-    ? fuse.search(debouncedQuery).map((result) => result.item)
-    : null;
-  const featured = collections.filter((collection) => collection.isFeatured);
 
   return (
     <div className='flex min-h-0 flex-1 flex-col gap-4'>
@@ -173,27 +177,8 @@ export const CollectionGrid = () => {
           </EmptyHeader>
         </Empty>
       ) : (
-        <div className='min-h-0 flex-1 overflow-auto pb-24'>
-          <div className='flex flex-col gap-8'>
-            {results ? (
-              <CollectionSection collections={results} />
-            ) : (
-              <>
-                {featured.length > 0 && (
-                  <CollectionSection
-                    collections={featured}
-                    title={t("collections.featured")}
-                  />
-                )}
-                <CollectionSection
-                  collections={collections.filter(
-                    (collection) => !collection.isFeatured,
-                  )}
-                  title={t("collections.all")}
-                />
-              </>
-            )}
-          </div>
+        <div className='min-h-0 flex-1 overflow-auto pb-24' ref={scrollRef}>
+          <VirtualCollectionList scrollRef={scrollRef} sections={sections} />
         </div>
       )}
     </div>
@@ -204,7 +189,7 @@ export const CollectionGridSkeleton = () => (
   <div className='flex min-h-0 flex-1 flex-col gap-4'>
     <Skeleton className='h-10 w-80' />
     <div className='min-h-0 flex-1 overflow-hidden'>
-      <div className={GRID_CLASS}>
+      <div className={COLLECTION_GRID_CLASS}>
         {Array.from({ length: 12 }, (_, index) => (
           <CollectionCardSkeleton key={index} />
         ))}
